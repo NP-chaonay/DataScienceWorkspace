@@ -1,0 +1,540 @@
+### [CODE] Import modules
+# Built-Ins and Pre-Installed
+import os
+from time import sleep
+from threading import Thread as Thread
+from codecs import escape_decode
+import glob
+import pickle
+import subprocess
+import multiprocessing
+from math import floor,log2
+from functools import reduce
+# Downloadable modules
+import scipy.signal
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+from sklearn.svm import LinearSVC
+from sklearn.metrics import classification_report,confusion_matrix
+from sklearn.preprocessing import LabelEncoder
+from sklearn.decomposition import PCA # For using Data Decomposition
+
+### [CODE] Define functions
+# Tagged as need to be improve
+def array1d_append(array,value):
+	shape=array.shape
+	if len(shape)!=1: raise np.AxisError('Inputted array should be 1 dimension.')
+	array=np.resize(array,(shape[0]+1,))
+	array[-1]=value
+	return array
+
+# Tagged as might need to be improve
+def array_replace(array,orig,new):
+	shape=array.shape
+	array=list(np.nditer(array))
+	for i in range(len(array)):
+		if array[i]==orig: array[i]=np.array(new)
+	return np.array(array).reshape(shape)
+
+def print_err(err,action='doing a operation',type_='Warning'):
+	print('['+type_+'] Exception occurred when '+action+'.')
+	print('  '+type(err).__name__+': '+str(err))
+
+# Tagged as legacy, use scp_io_wav.read(preprocess_audio(<path>))[1] altogether instead.
+def process_wave_data(path):
+	audio=scp_io_wav.read(path)
+	rate=audio[0]
+	ch1=audio[1][:,0]
+	ch2=audio[1][:,1]
+	del audio
+	duration=rate*5
+	side=round( (len(ch1)-duration)/2 )
+	side_1=round( (len(ch1)-duration)*0.25 )
+	side_2=round( (len(ch1)-duration)*0.75 )
+	ch1_f=np.array(ch1[:duration],'float')
+	ch1_m=np.array(ch1[side:side+duration],'float')
+	ch1_l=np.array(ch1[-duration:],'float')
+	ch1_1=np.array(ch1[side_1:side_1+duration],'float')
+	ch1_2=np.array(ch1[side_2:side_2+duration],'float')
+	ch2_f=np.array(ch2[:duration],'float')
+	ch2_m=np.array(ch2[side:side+duration],'float')
+	ch2_l=np.array(ch2[-duration:],'float')
+	ch2_1=np.array(ch2[side_1:side_1+duration],'float')
+	ch2_2=np.array(ch2[side_2:side_2+duration],'float')
+	del ch1,ch2
+	snd_f=(ch1_f+ch2_f)/2
+	snd_m=(ch1_m+ch2_m)/2
+	snd_l=(ch1_l+ch2_l)/2
+	snd_1=(ch1_1+ch2_1)/2
+	snd_2=(ch1_2+ch2_2)/2
+	del ch1_f,ch1_m,ch1_l,ch1_1,ch1_2,ch2_f,ch2_m,ch2_l,ch2_1,ch2_2
+	snd=np.append(snd_f,[snd_1,snd_m,snd_2,snd_l])
+	return np.array(snd,'int16')
+
+def save_youtube(_url,metadata,start=None,end=None,pitch=None):
+	for file in glob.glob(temp_path+'*'):
+		try: os.remove(file)
+		except Exception as err: print_err(err,'deleting unused files')
+	print('Downloading using youtube-dl...')
+	process=subprocess.run(executable='youtube-dl',args=['youtube-dl','-o',temp_path+'youtube_dl-downloaded.%(ext)s','--exec','mv {} '+temp_path+'youtube_dl-downloaded',_url],stdout=subprocess.PIPE,stderr=subprocess.PIPE,stdin=subprocess.DEVNULL)
+	if process.returncode!=0:
+		print('[Error] youtube-dl process doesn\'t return to 0.')
+		print('<< Start of Process console output>>')
+		print(process.stdout.decode())
+		print('<< End of Process console output>>')
+		raise DataError('Error occurred when getting the audio data from Youtube.')
+	processed_path=prepare_data_ffmpeg(temp_path+'youtube_dl-downloaded',start,end,pitch)
+	print('Insert audio data to program memory...')
+	insert(process_wave_data(processed_path))
+	print('Saving to storage...')
+	write(len(x),len(x))
+	print('Adding/Changing song metadata to database...')
+	change_db(*metadata)
+	global y
+	y=le.fit_transform(db.Key)
+	print('Updating database in storage...')
+	update_to_ldb()
+
+def change_db(*args):
+	global db
+	if len(args)==len(db.columns)+1:
+		db.loc[args[0]]=pd.Series(args[1:],index=db.columns)
+	else: raise ValueError('Amount of data inputted isn\'t matched with current database.')
+	update_to_ldb()
+
+def update_from_ldb(NoBackup=False):
+	global db,db_,x,x_,y,y_,le,le_
+	if 'x' in globals() and not NoBackup: x_=x
+	if 'db' in globals() and not NoBackup: db_=db
+	if 'y' in globals() and not NoBackup: y_=y
+	if 'le' in globals() and not NoBackup: le_=le
+	length=len(os.listdir(path))
+	x=np.empty((length,1102500),'int16')
+	for i in range(length):
+		x[i]=scp_io_wav.read(root+str(i+1))[1]
+	db=pd.read_csv(database,index_col='Name')
+	y=le.fit_transform(db.Key)
+
+def get_first_zero_index_pos(wave,start_index):
+	try:
+		first_value=wave[start_index]
+		if first_value>0:
+			for i  in range(start_index+1,len(wave)):
+				if wave[i]<0:
+					d=abs(wave[i]-wave[i-1])
+					first_zero_index_pos=i-1+(abs(wave[i-1])/d)
+					break
+				elif wave[i]==0:
+					first_zero_index_pos=i
+					break
+		elif first_value<0:
+			for i  in range(start_index+1,len(wave)):
+				if wave[i]>0:
+					d=abs(wave[i]-wave[i-1])
+					first_zero_index_pos=i-1+(abs(wave[i-1])/d)
+					break
+				elif wave[i]==0:
+					first_zero_index_pos=i
+					break
+		else:
+			first_zero_index_pos=start_index
+		return first_zero_index_pos
+	except IndexError: raise DataError('Given start index isn\'t found.')
+	except UnboundLocalError: raise DataError('No next zero-interception from the given start index.')
+
+def get_wavelength(wave,start_index):
+	begin=get_first_zero_index_pos(wave,start_index)
+	end=get_first_zero_index_pos(wave,floor(get_first_zero_index_pos(wave,floor(begin)+1))+1)
+	return abs(end-begin)
+
+def prepare_data_ffmpeg(path,start=None,end=None,pitch=None,to_path=None):
+	print('1st Normalizing/Converting using ffmpeg-normalize...')
+	process=subprocess.run(executable='ffmpeg-normalize',args=['ffmpeg-normalize','-o',temp_path+'converted_phase1','-f','-vn','-ofmt','wav','-nt','peak','-t','0',path],stdout=subprocess.PIPE,stderr=subprocess.PIPE,stdin=subprocess.DEVNULL)
+	if process.returncode!=0:
+		print('[Error] ffmpeg-normalize process doesn\'t return to 0.')
+		if process.stdout is not None:
+			print('<< Start of Process stdout console output>>')
+			print(process.stdout.decode())
+			print('<< End of Process stdout console output>>')
+		else: print('[Note] process\'s stdout is not available.')
+		if process.stderr is not None:
+			print('<< Start of Process stderr console output>>')
+			print(process.stderr.decode())
+			print('<< End of Process stderr console output>>')
+		else: print('[Note] process\'s stderr is not available.')
+		raise DataError('Error occurred when pre-processing the audio data from local file.')
+	print('Converting/Tweaking using ffmpeg...')
+	arg_filters='highpass=f=250, lowpass=f=10000'
+	if pitch!=None: arg_filters+=', rubberband=pitch='+str(pitch)+':pitchq=quality:channels=together'
+	else: pass
+	args=['ffmpeg','-i',temp_path+'converted_phase1','-af',arg_filters,'-f','wav','-acodec','pcm_s16le','-ar','44100','-ac','1','-y',temp_path+'converted_phase2']
+	if start!=None and end!=None: args.insert(1,'-ss'); args.insert(2,str(start)); args.insert(3,'-to'); args.insert(4,str(end))
+	elif start==None and end!=None: args.insert(1,'-to'); args.insert(2,str(end))
+	elif end==None and start!=None: args.insert(1,'-ss'); args.insert(2,str(start))
+	else: pass
+	process=subprocess.run(executable='ffmpeg',args=args,stdout=subprocess.PIPE,stderr=subprocess.PIPE,stdin=subprocess.DEVNULL)
+	if process.returncode!=0:
+		print('[Error] ffmpeg process doesn\'t return to 0.')
+		if process.stdout is not None:
+			print('<< Start of Process stdout console output>>')
+			print(process.stdout.decode())
+			print('<< End of Process stdout console output>>')
+		else: print('[Note] process\'s stdout is not available.')
+		if process.stderr is not None:
+			print('<< Start of Process stderr console output>>')
+			print(process.stderr.decode())
+			print('<< End of Process stderr console output>>')
+		else: print('[Note] process\'s stderr is not available.')
+		raise DataError('Error occurred when pre-processing the audio data from local file.')
+	print('2nd Normalizing using ffmpeg-normalize...')
+	process=subprocess.run(executable='ffmpeg-normalize',args=['ffmpeg-normalize','-o',temp_path+'processed_data','-f','-c:a','pcm_s16le','-ar','44100','-ofmt','wav','-nt','peak','-t','0',temp_path+'converted_phase2'],stdout=subprocess.PIPE,stderr=subprocess.PIPE,stdin=subprocess.DEVNULL)
+	if process.returncode!=0:
+		print('[Error] ffmpeg-normalize process doesn\'t return to 0.')
+		if process.stdout is not None:
+			print('<< Start of Process stdout console output>>')
+			print(process.stdout.decode())
+			print('<< End of Process stdout console output>>')
+		else: print('[Note] process\'s stdout is not available.')
+		if process.stderr is not None:
+			print('<< Start of Process stderr console output>>')
+			print(process.stderr.decode())
+			print('<< End of Process stderr console output>>')
+		else: print('[Note] process\'s stderr is not available.')
+		raise DataError('Error occurred when pre-processing the audio data from local file.')
+	if to_path is None: to_path=temp_path+'processed_data'
+	else:
+		file_byte=open(temp_path+'processed_data','rb').read()
+		open(to_path,'wb').write(file_byte)
+	return to_path
+
+def prepare_data_crop(path,to_path=None):
+	audio=scp_io_wav.read(path)
+	rate=audio[0]
+	snd=audio[1]
+	del audio
+	duration=rate*5
+	if snd.shape[0]<duration*5: raise DataError('Inputted audio has sample point less than '+str(duration*5)+'.')
+	side=round( (len(snd)-duration)/2 )
+	side_1=round( (len(snd)-duration)*0.25 )
+	side_2=round( (len(snd)-duration)*0.75 )
+	snd_f=np.array(snd[:duration])
+	snd_m=np.array(snd[side:side+duration])
+	snd_l=np.array(snd[-duration:])
+	snd_1=np.array(snd[side_1:side_1+duration])
+	snd_2=np.array(snd[side_2:side_2+duration])
+	snd=np.concatenate([snd_f,snd_1,snd_m,snd_2,snd_l])
+	if to_path is None:
+		to_path=temp_path+'processed_data'
+	scp_io_wav.write(to_path,rate,snd.astype('int16'))
+	return to_path
+
+def preprocess_audio(path,start=None,end=None,pitch=None,to_path=None):
+	print('Phase 1 : prepare_data_ffmpeg')
+	path=prepare_data_ffmpeg(path,start,end,pitch)
+	print('Phase 2 : prepare_data_crop')
+	return prepare_data_crop(path,to_path)
+
+def prepare_data(audio_arr):
+	print('Phase 1 : Initialization')
+	sep_sam=[0,220500, 441000, 661500, 882000, 1102500]
+	notediff=[]
+	for i in range(5):
+		print('Phase 2 : (Loop '+str(i+1)+'/5) (Pharse 1/4) : calculate_data_spectrum')
+		audio_spectrum=calculate_data_spectrum(audio_arr[sep_sam[i]:sep_sam[i+1]])
+		print('Phase 2 : (Loop '+str(i+1)+'/5) (Pharse 2/4) : calculate_data_haffot')
+		audio_haffot=calculate_data_haffot(audio_spectrum)
+		print('Phase 2 : (Loop '+str(i+1)+'/5) (Pharse 3/4) : calculate_data_note')
+		audio_note=calculate_data_note(audio_haffot)
+		print('Phase 2 : (Loop '+str(i+1)+'/5) (Pharse 4/4) : calculate_data_notediff')
+		notediff+=[calculate_data_notediff(audio_note)]
+	return np.concatenate(notediff)
+
+def calculate_data_spectrum(audio_arr):
+	# nperseg and nfft calculated by using np.zeros(44100) as audio_arr and these values make outcome's shape is (32 (minimal acceptable time resolution) x  18542 (minimal acceptable frequency resolution))
+	return scipy.signal.spectrogram(audio_arr,44100,nperseg=1568,nfft=37082)[2].T
+
+def calculate_data_haffot(audio_spectrum):
+	max_amp_freq_amp_array=np.apply_along_axis(np.max,1,audio_spectrum)
+	freq_index_array=[]
+	for c in range(len(audio_spectrum)):
+		if not np.all(audio_spectrum[c]==0):
+			freq_index_array+=[round(np.where(max_amp_freq_amp_array[c]==audio_spectrum[c])[0].mean()).astype('int')]
+		else: freq_index_array+=[0]
+	return [freq_bin[i] for i in freq_index_array]
+
+def calculate_data_note(audio_haffot):
+	note_array=[]
+	for freq in audio_haffot:
+		if freq!=0:
+			note_array+=[float(round(12*log2(freq/440)))]
+		else:
+			note_array+=[float('nan')]
+	return np.nan_to_num(np.array(note_array),nan=np.nanmean(note_array))
+
+def calculate_data_notediff(audio_note):
+	return np.diff(audio_note)
+
+### [CODE] Define functions (Wait to clean them up)
+def convert_local(path,to_path=None):
+	os.system('rm /tmp/ML_test.wav 1>/dev/null 2>/dev/null')
+	os.system('ffmpeg -i "'+path+'" -f wav -acodec pcm_s16le -ar 44100 -ac 2 -y /tmp/ML_test.wav'+quiet_str)
+	if to_path!=None: scp_io_wav.write(to_path,44100,process_wave_data('/tmp/ML_test.wav'))
+	else: scp_io_wav.write(path,44100,process_wave_data('/tmp/ML_test.wav'))
+
+def testML(path):
+	return clf.predict([process_wave_data(path)])
+
+def write_thread(t,start=1,end=None):
+	cnt1=0
+	while True:
+		no=t+8*cnt1+(start-1)
+		if end!=None and no>end: return
+		i=no-1
+		try: x[i]
+		except IndexError: return
+		scp_io_wav.write(root+str(no),44100,x[i])
+		cnt1+=1
+
+def read_thread(t,start=1,end=None):
+	global x_
+	if end==None: end=len(db)
+	for no in range(t+(start-1),end+1,8):
+		i=no-1
+		path=root+str(no)
+		x_[i]=scp_io_wav.read(root+str(no))[1]
+
+# Can add/remove amount of threads manually
+def write(start=1,end=None):
+	from threading import Thread as Thread
+	wt1=Thread(name='WritingThread1',target=write_thread,args=(1,start,end))
+	wt2=Thread(name='WritingThread2',target=write_thread,args=(2,start,end))
+	wt3=Thread(name='WritingThread3',target=write_thread,args=(3,start,end))
+	wt4=Thread(name='WritingThread4',target=write_thread,args=(4,start,end))
+	wt5=Thread(name='WritingThread5',target=write_thread,args=(5,start,end))
+	wt6=Thread(name='WritingThread6',target=write_thread,args=(6,start,end))
+	wt7=Thread(name='WritingThread7',target=write_thread,args=(7,start,end))
+	wt8=Thread(name='WritingThread8',target=write_thread,args=(8,start,end))
+	wt1.start()
+	wt2.start()
+	wt3.start()
+	wt4.start()
+	wt5.start()
+	wt6.start()
+	wt7.start()
+	wt8.start()
+	wt1.join(); wt2.join(); wt3.join(); wt4.join(); wt5.join(); wt6.join(); wt7.join(); wt8.join()
+# Can add/remove amount of threads manually
+
+def read(start=1,end=None):
+	global x_
+	if end==None: x_=np.empty((len(os.listdir(path))-(start-1),1102500),'int16')
+	else: x_=np.empty((end-start+1,1102500),'int16')
+	rt1=Thread(name='ReadingThread1',target=read_thread,args=(1,start,end))
+	rt2=Thread(name='ReadingThread2',target=read_thread,args=(2,start,end))
+	rt3=Thread(name='ReadingThread3',target=read_thread,args=(3,start,end))
+	rt4=Thread(name='ReadingThread4',target=read_thread,args=(4,start,end))
+	rt5=Thread(name='ReadingThread5',target=read_thread,args=(5,start,end))
+	rt6=Thread(name='ReadingThread6',target=read_thread,args=(6,start,end))
+	rt7=Thread(name='ReadingThread7',target=read_thread,args=(7,start,end))
+	rt8=Thread(name='ReadingThread8',target=read_thread,args=(8,start,end))
+	rt1.start()
+	rt2.start()
+	rt3.start()
+	rt4.start()
+	rt5.start()
+	rt6.start()
+	rt7.start()
+	rt8.start()
+	rt1.join(); rt2.join(); rt3.join(); rt4.join(); rt5.join(); rt6.join(); rt7.join(); rt8.join()
+
+def insert(snd):
+	x.resize((x.shape[0]+1,x.shape[1]),refcheck=False)
+	pos=len(x)-1
+	x[pos]=snd
+
+def save_local(path):
+	_null=os.system('rm /tmp/ML_test.wav'+quiet_str)
+	_null=os.system('ffmpeg -i "'+path+'" -f wav -acodec pcm_s16le -ar 44100 -ac 2 -y /tmp/ML_test.wav'+quiet_str)
+	insert(process_wave_data('/tmp/ML_test.wav'))
+	write(len(x),len(x))
+
+def test_local(path):
+	_null=os.system('rm /tmp/ML_test.wav 1>/dev/null 2>/dev/null')
+	_null=os.system('ffmpeg -i "'+path+'" -f wav -acodec pcm_s16le -ar 44100 -ac 2 -y /tmp/ML_test.wav'+quiet_str)
+	return clf.predict([process_wave_data('/tmp/ML_test.wav')])[0]
+
+def youtube_test(_url):
+	_null=os.system('rm /tmp/ML_test.wav'+quiet_str)
+	_null=os.system("(rm -f /tmp/ML_tmp.*; youtube-dl -o '/tmp/ML_tmp.%(ext)s' '"+_url+"')"+quiet_str)
+	_null=os.system('ffmpeg -i /tmp/ML_tmp.* -f wav -acodec pcm_s16le -ar 44100 -ac 2 -y /tmp/ML_test.wav'+quiet_str)
+	return clf.predict([process_wave_data('/tmp/ML_test.wav')])
+
+def record_test():
+	_null=os.system('rm /tmp/ML_test.wav'+quiet_str)
+	print('REC...')
+	_null=os.system('arecord -t wav -f S16_LE -r 44100 -c 2 /tmp/ML_test.wav'+quiet_str)
+	return clf.predict([process_wave_data('/tmp/ML_test.wav')])
+
+def save_recording():
+	_null=os.system('rm /tmp/ML_test.wav'+quiet_str)
+	print('REC...')
+	_null=os.system('arecord -t wav -f S16_LE -r 44100 -c 2 /tmp/ML_test.wav'+quiet_str)
+	insert(process_wave_data('/tmp/ML_test.wav'))
+	write(len(x),len(x))
+	ask_y()
+
+def youtube_askname(_url,name):
+	global db,y
+	_null=os.system('rm /tmp/ML_test.wav'+quiet_str)
+	_null=os.system("(rm -f /tmp/ML_tmp.*; youtube-dl -o '/tmp/ML_tmp.%(ext)s' '"+_url+"')"+quiet_str)
+	_null=os.system('ffmpeg -i /tmp/ML_tmp.* -f wav -acodec pcm_s16le -ar 44100 -ac 2 -y /tmp/ML_test.wav'+quiet_str)
+	insert(process_wave_data('/tmp/ML_test.wav'))
+	write(len(x),len(x))
+	global db
+	datas=[]
+	datas+=[name]
+	for cnt in range(len(db.columns)):
+		datas+=['']
+	with open(database,'r+') as _tmp:
+		_tmp.seek(_tmp.seek(0,2)-1)
+		if _tmp.read()!='\n': _tmp.write('\n'+','.join(datas))
+		else: _tmp.write(','.join(datas))
+	update_from_ldb()
+
+def update_to_ldb():
+	open(database+'.bak','w').write(open(database).read())
+	db.to_csv(database)
+
+def ask_y():
+	global db
+	datas=[]
+	datas+=[input('Name : ')]
+	for column in db.columns:
+		datas+=[input('Data for ('+str(column)+') : ')]
+	with open(database,'r+') as _tmp:
+		_tmp.seek(_tmp.seek(0,2)-1)
+		if _tmp.read()!='\n': _tmp.write('\n'+','.join(datas))
+		else: _tmp.write(','.join(datas))
+	update_from_ldb()
+
+def record_test_multiple():
+	global test
+	test=np.array([],'int8')
+	while True:
+		test=np.append(test,record_test())
+		input('Continue??')
+
+### [CODE] Define variables (Wait to clean them up)
+# Notes : Directory path should be append with '/'
+	### Configuration zone
+# Selecting the Main path
+main_path='/home/np-chaonay/Misc/MusicDataset-2/'
+# Songs metadata file location
+database=main_path+'database.csv'
+# Training data location
+path=main_path+'Songs/'
+# Temporary uploading file location
+uploading_path=main_path+'Uploaded/'
+# Uploaded song location
+uploaded_songs=uploading_path+'Songs/'
+# Uploaded test audio location
+uploaded_testing=uploading_path+'Testing/'
+# Prefixing filename of training audio data (Including folder path)
+root=path+'dsb-'
+# Temporary directory
+temp_path='/tmp/np-chaonay.ML/'
+	### [Configuration zone END]
+# Label encoding class
+le=LabelEncoder()
+# Quiet string for ignore console I/O of os.system()
+quiet_str=' </dev/null 1>/dev/null 2>/dev/null'
+# DataError Exception
+class DataError(Exception):
+	pass
+
+# Frequency bins
+freq_bin=scipy.signal.spectrogram(np.zeros(1102500),44100,nperseg=1573,nfft=37082)[0]
+
+### [CODE] Defining personal modules/functions/variables
+# Recording_1
+def record_1():
+	global test
+	test=np.array([],'int8')
+	while True:
+		print('(Odd)')
+		test=np.append(test,record_test())
+		input('Continue?? (Even)')
+		print('(Even)')
+		test=np.append(test,record_test())
+		input('Continue?? (Odd)')
+
+# Youtube_1
+# Note: Check current csv file header and this function before use.
+def YT():
+	_url=input('URL:')
+	name=input('NAME:')
+	emotion=input('EMOTION:')
+	key=input('KEY:')
+	global db,y,clf
+	_null=os.system('rm /tmp/ML_test.wav'+quiet_str)
+	_null=os.system("(rm -f /tmp/ML_tmp.*; youtube-dl -o '/tmp/ML_tmp.%(ext)s' '"+_url+"')"+quiet_str)
+	_null=os.system('ffmpeg -i /tmp/ML_tmp.* -f wav -acodec pcm_s16le -ar 44100 -ac 2 -y /tmp/ML_test.wav'+quiet_str)
+	snd=process_wave_data('/tmp/ML_test.wav')
+	print('RESULT:',clf.predict([snd]))
+	insert(snd)
+	write(len(x),len(x))
+	datas=[]
+	datas+=[name,emotion,key]
+	for cnt in range(len(db.columns)-2):
+		datas+=['']
+	with open(database,'r+') as _tmp:
+		_tmp.seek(_tmp.seek(0,2)-1)
+		if _tmp.read()!='\n': _tmp.write('\n'+','.join(datas))
+		else: _tmp.write(','.join(datas))
+	update_from_ldb()
+
+def readURL(url):
+	url=list(url)
+	mark=-1
+	while True:
+		for i,char in enumerate(url):
+			if i<=mark: continue
+			if char=='%':
+				mark=i
+				url[i]=escape_decode('\\x'+''.join(url[i+1:i+3]))[0]
+				del url[i+2]; del url[i+1]
+				break
+		else: break
+	for i,char in enumerate(url):
+		if type(char) is str: continue
+		c=1
+		while True:
+			bytes_sum=bytes()
+			for byte in url[i:i+c]:
+				bytes_sum+=byte
+			try: url[i]=bytes_sum.decode()
+			except UnicodeDecodeError: c+=1
+			else: del url[i+1:i+c]; break
+	return ''.join(url)[7:]
+
+### [CODE] Getting things ready for use
+# Create temporary directory
+try: os.mkdir(temp_path)
+except FileExistsError: pass
+
+# Getting song metadata from .csv file
+update_from_ldb()
+# Loading pre-processed audio data from local storage for training
+read()
+# Rename variable
+x_raw=x_
+del x_
+# Load saved note array from local storage
+x_note_array=pickle.load(open(main_path+'note_array.pickle','rb'))
+# Set default x
+x=x_note_array
+# Check if there're something wrong
+if x.shape[0]==y.shape[0]==len(os.listdir(path)): pass
+else : raise DataError('Length of database entries and amount of the pre-processed audio data aren\'t matched.')
+# [CODE END]
